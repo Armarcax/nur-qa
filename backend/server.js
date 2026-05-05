@@ -22,34 +22,47 @@ const upload = multer({
   }
 });
 
-// --- Existing Route: Upload ZIP ---
+// --- Route 1: Upload ZIP ---
 app.post('/api/analyze', upload.single('project'), async (req, res) => {
-  // ... (քո existing code-ը նույնն է) ...
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    
     console.log(`Received file: ${req.file.originalname}`);
     const codebase = await processUploadedFile(req.file.buffer);
+    
     if (codebase.length === 0) return res.status(400).json({ error: "No valid code files found in ZIP" });
     
     const results = await generateTestsAndBugs(codebase);
-    
+
+    // Check if there are fixed files to send back as ZIP
     if (results.fixedFiles && results.fixedFiles.length > 0) {
       const newZip = new AdmZip();
-      codebase.forEach(file => newZip.addFile(file.path, Buffer.from(file.content)));
-      results.fixedFiles.forEach(fixedFile => newZip.addFile(fixedFile.path, Buffer.from(fixedFile.content)));
+      
+      // Add all original files first
+      codebase.forEach(file => {
+        newZip.addFile(file.path, Buffer.from(file.content));
+      });
+
+      // Overwrite with fixed files
+      results.fixedFiles.forEach(fixedFile => {
+        newZip.addFile(fixedFile.path, Buffer.from(fixedFile.content));
+      });
+
+      const zipBuffer = newZip.toBuffer();
       
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', 'attachment; filename="NUR_QA_Fixed_Project.zip"');
-      return res.send(newZip.toBuffer());
+      return res.send(zipBuffer);
     } else {
       res.json(results);
     }
   } catch (error) {
+    console.error("Server Error: ", error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// --- NEW Route: Analyze GitHub Repo ---
+// --- Route 2: Analyze GitHub Repo ---
 app.post('/api/analyze-github', async (req, res) => {
   try {
     const { owner, repo, branch } = req.body;
