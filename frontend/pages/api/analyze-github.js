@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   try {
     const targetUrl = new URL('/api/analyze-github', BACKEND_URL);
     
-    // Մաքրում ենք headers-ները
+    // Մաքրում ենք headers-ները՝ թողնելով միայն անհրաժեշտները
     const safeHeaders = {
       'content-type': req.headers['content-type'],
       'content-length': req.headers['content-length'],
