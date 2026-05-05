@@ -13,24 +13,31 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Օգտագործում ենք NEXT_PUBLIC_BACKEND_URL, որը Vercel-ում և .env.local-ում է
-  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
-  
-  console.log(`[Proxy] Forwarding request to: ${BACKEND_URL}/api/analyze`);
+  // Վերցնում ենք URL-ը .env-ից
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
+  if (!BACKEND_URL) {
+    console.error('[NUR QA Proxy] NEXT_PUBLIC_BACKEND_URL is not defined in Vercel Env Vars');
+    return res.status(500).json({ error: 'Backend URL is not configured on the server.' });
+  }
+
+  console.log(`[NUR QA Proxy] Forwarding request to: ${BACKEND_URL}/api/analyze`);
 
   try {
     const targetUrl = new URL('/api/analyze', BACKEND_URL);
     
+    // Մաքրում ենք headers-ները՝ թողնելով միայն անհրաժեշտները
+    const safeHeaders = {
+      'content-type': req.headers['content-type'],
+      'content-length': req.headers['content-length'],
+    };
+
     const options = {
       hostname: targetUrl.hostname,
       port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
       path: targetUrl.pathname,
       method: 'POST',
-      headers: {
-        ...req.headers,
-        host: targetUrl.host,
-        connection: 'close' // Կարևոր է պրոքսիի համար
-      },
+      headers: safeHeaders,
     };
 
     const client = targetUrl.protocol === 'https:' ? https : http;
@@ -41,9 +48,9 @@ export default async function handler(req, res) {
     });
 
     proxyReq.on('error', (err) => {
-      console.error('[Proxy Error]', err.message);
+      console.error('[NUR QA Proxy Error]', err.message);
       if (!res.headersSent) {
-        res.status(502).json({ error: `Failed to connect to backend at ${BACKEND_URL}. Check if it's running.` });
+        res.status(502).json({ error: `Failed to connect to backend at ${BACKEND_URL}. Check if Render is awake.` });
       } else {
         res.end();
       }
@@ -52,7 +59,7 @@ export default async function handler(req, res) {
     req.pipe(proxyReq, { end: true });
 
   } catch (error) {
-    console.error('[Proxy Setup Error]', error);
+    console.error('[NUR QA Proxy Setup Error]', error);
     res.status(500).json({ error: 'Internal server error in proxy setup' });
   }
 }
