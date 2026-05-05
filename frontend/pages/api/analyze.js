@@ -14,8 +14,7 @@ export default async function handler(req, res) {
   }
 
   // Համոզվիր, որ այստեղ ճիշտ URL-ն է
-  const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:5000';
-  
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';  
   try {
     const targetUrl = new URL('/api/analyze', BACKEND_URL);
     
