@@ -13,8 +13,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Համոզվիր, որ այստեղ ճիշտ URL-ն է
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';  
+  // Ստուգում ենք NEXT_PUBLIC_BACKEND_URL, քանի որ դա Vercel-ում հասանելի է
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'http://localhost:5000';
+  
+  console.log(`Proxying request to: ${BACKEND_URL}/api/analyze`);
+
   try {
     const targetUrl = new URL('/api/analyze', BACKEND_URL);
     
@@ -26,6 +29,8 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:500
       headers: {
         ...req.headers,
         host: targetUrl.host,
+        // Հեռացնում ենք connection header-ը, որպեսզի խնդիրներ չլինեն
+        connection: 'close'
       },
     };
 
@@ -37,9 +42,9 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:500
     });
 
     proxyReq.on('error', (err) => {
-      console.error('Proxy Error:', err);
+      console.error('Proxy Error:', err.message);
       if (!res.headersSent) {
-        res.status(502).json({ error: 'Failed to connect to backend service. Is it running on port 5000?' });
+        res.status(502).json({ error: `Failed to connect to backend at ${BACKEND_URL}. Is it running?` });
       } else {
         res.end();
       }
@@ -49,6 +54,6 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:500
 
   } catch (error) {
     console.error('Server Setup Error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: 'Internal server error in proxy' });
   }
 }
