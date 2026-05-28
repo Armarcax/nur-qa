@@ -21,8 +21,17 @@ import {
   X,
   FileCode,
   Send,
-  Download
+  Download,
+  FileText,
+  FileJson,
+  Layers
 } from 'lucide-react';
+
+// Export Libraries
+import { jsPDF } from "jspdf";
+import "jspdf-autotable";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 
 // --- Configuration & Constants ---
 
@@ -34,6 +43,7 @@ const TRANSLATIONS = {
     appName: "NUR QA",
     tagline: "Intelligent Testing Engine",
     uploadProject: "Upload Project (ZIP)",
+    uploadFiles: "Upload Files (Multi)",
     connectGithub: "Analyze GitHub Repo",
     analyzing: "Analyzing Architecture...",
     generatingTests: "Generating AI Tests...",
@@ -68,6 +78,7 @@ const TRANSLATIONS = {
     appName: "NUR QA",
     tagline: "Խելացի թեստավորման համակարգ",
     uploadProject: "Վերբեռնել նախագիծը (ZIP)",
+    uploadFiles: "Վերբեռնել ֆայլեր (Multi)",
     connectGithub: "Վերլուծել GitHub Ռեպոզիտորիա",
     analyzing: "Վերլուծություն...",
     generatingTests: "Գեներացվում են թեստեր...",
@@ -102,6 +113,7 @@ const TRANSLATIONS = {
     appName: "NUR QA",
     tagline: "Интеллектуальный движок тестирования",
     uploadProject: "Загрузить проект (ZIP)",
+    uploadFiles: "Загрузить файлы (Multi)",
     connectGithub: "Анализировать GitHub Репозиторий",
     analyzing: "Анализ архитектуры...",
     generatingTests: "Генерация тестов ИИ...",
@@ -199,9 +211,11 @@ export default function NurQAApp() {
   const [results, setResults] = useState([]);
   const [changelog, setChangelog] = useState([]);
   const [stats, setStats] = useState({ errors: 0, warnings: 0, performance: 0, score: 0, coverage: 0 });
+  const [sessionId, setSessionId] = useState(null);
   const [activeTab, setActiveTab] = useState('issues');
   const [errorMessage, setErrorMessage] = useState("");
   const [isZipDownloaded, setIsZipDownloaded] = useState(false);
+  const [exportReady, setExportReady] = useState(false);
 
   // GitHub State
   const [githubUrl, setGithubUrl] = useState("");
@@ -213,19 +227,13 @@ export default function NurQAApp() {
   const [isTyping, setIsTyping] = useState(false);
   const chatEndRef = useRef(null);
 
-  // Refs
-  const logInterval = useRef(null);
-
-  // Derived state
   const t = TRANSLATIONS[lang];
   const isDark = theme === THEMES.DARK;
 
-  // Scroll to bottom of chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
-  // Initialize Chat when Dashboard loads
   useEffect(() => {
     if (view === 'dashboard' && chatMessages.length === 0 && projectName) {
       setChatMessages([
@@ -234,10 +242,10 @@ export default function NurQAApp() {
           content: `I've analyzed your project "${projectName}". I found ${results.length} issues. ${isZipDownloaded ? "The fixed project has been downloaded." : "I can generate a fixed version for you."}`
         }
       ]);
+      setExportReady(results.length > 0);
     }
   }, [view, projectName, results, isZipDownloaded]);
 
-  // Handlers
   const toggleTheme = () => setTheme(prev => prev === THEMES.DARK ? THEMES.LIGHT : THEMES.DARK);
   const toggleLang = () => {
     const langs = Object.values(LANGUAGES);
@@ -254,28 +262,104 @@ export default function NurQAApp() {
     setChatInput("");
     setIsTyping(true);
 
-    // Simulate AI Response
     setTimeout(() => {
       let aiResponseContent = "";
-
-      if (chatInput.toLowerCase().includes("fix") || chatInput.toLowerCase().includes("ուղղել")) {
+      if (chatInput.toLowerCase().includes("fix")) {
         aiResponseContent = "I have analyzed and fixed the codebase. You can see the detailed changelog in the 'Changes & Fix History' tab.";
-      } else if (chatInput.toLowerCase().includes("security") || chatInput.toLowerCase().includes("անվտանգություն")) {
-        aiResponseContent = "Security is a priority. I noticed some potential vulnerabilities in your input handling. Always validate and sanitize user data.";
       } else {
-        aiResponseContent = "That's an interesting question. Based on your codebase, I recommend refactoring the main loop to improve performance.";
+        aiResponseContent = "I recommend reviewing the performance warnings I identified in your data processing loops.";
       }
-
       setChatMessages(prev => [...prev, { role: 'ai', content: aiResponseContent }]);
       setIsTyping(false);
     }, 1500);
   };
 
+  const triggerDownload = (id) => {
+    if (!id) return;
+    setTimeout(() => {
+        window.location.href = `/api/download-fix?sessionId=${id}`;
+        setIsZipDownloaded(true);
+    }, 500);
+  };
+
+  // --- Export Functions ---
+
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    doc.text(`NUR QA Report: ${projectName}`, 14, 15);
+
+    const tableData = results.map(r => [
+      r.file,
+      r.line,
+      r.type.toUpperCase(),
+      r.message,
+      r.suggestion
+    ]);
+
+    doc.autoTable({
+      head: [['File', 'Line', 'Type', 'Issue', 'Suggestion']],
+      body: tableData,
+      startY: 20,
+      theme: 'grid'
+    });
+
+    doc.save(`NUR_Report_${projectName}.pdf`);
+  };
+
+  const exportToExcel = () => {
+    const ws = XLSX.utils.json_to_sheet(results.map(r => ({
+      File: r.file,
+      Line: r.line,
+      Type: r.type,
+      Issue: r.message,
+      Suggestion: r.suggestion,
+      Fix: r.fix
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "QA Results");
+    XLSX.writeFile(wb, `NUR_Report_${projectName}.xlsx`);
+  };
+
+  const exportToWord = () => {
+    let content = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head><meta charset='utf-8'><title>NUR QA Report</title></head>
+      <body>
+        <h1>NUR QA Analysis Report: ${projectName}</h1>
+        <table border='1' style='border-collapse:collapse; width:100%'>
+          <tr style='background-color:#f2f2f2'>
+            <th>File</th><th>Line</th><th>Type</th><th>Issue</th><th>Suggestion</th>
+          </tr>
+          ${results.map(r => `
+            <tr>
+              <td>${r.file}</td><td>${r.line}</td><td>${r.type}</td><td>${r.message}</td><td>${r.suggestion}</td>
+            </tr>
+          `).join('')}
+        </table>
+      </body>
+      </html>
+    `;
+    const blob = new Blob(['\ufeff', content], { type: 'application/msword' });
+    saveAs(blob, `NUR_Report_${projectName}.doc`);
+  };
+
+  // --- Upload Handlers ---
+
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setProjectName(file.name.replace('.zip', ''));
+    processAnalysis('/api/analyze', file, 'project');
+  };
+
+  const handleFilesUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setProjectName(`Direct Upload (${files.length} files)`);
+    processAnalysis('/api/analyze-direct', files, 'files');
+  };
+
+  const processAnalysis = async (endpoint, payload, fieldName) => {
     setView('scanning');
     setScanProgress(5);
     setCurrentLog("Initializing upload...");
@@ -283,56 +367,27 @@ export default function NurQAApp() {
     setIsZipDownloaded(false);
 
     const formData = new FormData();
-    formData.append('project', file);
+    if (Array.isArray(payload)) {
+      payload.forEach(f => formData.append(fieldName, f));
+    } else {
+      formData.append(fieldName, payload);
+    }
 
     try {
-      // Simulate initial upload progress
-      let progress = 5;
-      const uploadInterval = setInterval(() => {
-        progress += 5;
-        if (progress > 40) clearInterval(uploadInterval);
-        setScanProgress(progress);
-        setCurrentLog(`Uploading ${file.name}...`);
-      }, 200);
-
-      const response = await fetch('/api/analyze', {
+      const response = await fetch(endpoint, {
         method: 'POST',
         body: formData,
       });
-
-      clearInterval(uploadInterval);
 
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'Server error occurred');
       }
 
-      setScanProgress(50);
-      setCurrentLog("Backend received files. Extracting...");
-
-      // Stream-like progress simulation
-      const processInterval = setInterval(() => {
-        setScanProgress(prev => {
-          if (prev >= 95) {
-            clearInterval(processInterval);
-            return 95;
-          }
-          return prev + 2;
-        });
-
-        const logs = [
-           "Parsing AST structure...",
-           "Identifying component boundaries...",
-           "Connecting to Groq Llama-3.3-70b...",
-           "Generating unit tests...",
-           "Checking for security vulnerabilities..."
-        ];
-        setCurrentLog(logs[Math.floor(Math.random() * logs.length)]);
-      }, 800);
+      setScanProgress(60);
+      setCurrentLog("Processing AI analysis...");
 
       const data = await response.json();
-      clearInterval(processInterval);
-
       setScanProgress(100);
       setCurrentLog("Analysis Complete");
 
@@ -340,34 +395,14 @@ export default function NurQAApp() {
         setResults(data.report.issues || []);
         setChangelog(data.report.changelog || []);
         setStats(data.report.stats || { errors: 0, warnings: 0, performance: 0, score: 0, coverage: 0 });
+        setSessionId(data.sessionId);
 
-        if (data.zipBase64) {
-          setCurrentLog("Downloading fixed project...");
-          const byteCharacters = atob(data.zipBase64);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], {type: 'application/zip'});
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = "NUR_QA_Fixed_Project.zip";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-          setIsZipDownloaded(true);
-        }
+        if (data.sessionId) triggerDownload(data.sessionId);
 
-        setTimeout(() => {
-          setView('dashboard');
-        }, 500);
+        setTimeout(() => setView('dashboard'), 500);
       } else {
         throw new Error(data.error || "Analysis failed");
       }
-
     } catch (error) {
       console.error("Analysis failed: ", error);
       setErrorMessage(error.message);
@@ -375,34 +410,26 @@ export default function NurQAApp() {
     }
   };
 
-  // --- NEW: GitHub Submit Handler ---
   const handleGithubSubmit = async (e) => {
     e.preventDefault();
     if (!githubUrl) return;
-
-    // Parse GitHub URL (e.g., https://github.com/owner/repo)
     const match = githubUrl.match(/github\.com\/([^\/]+)\/([^\/]+)/);
     if (!match) {
-      setErrorMessage("Invalid GitHub URL. Use format: https://github.com/owner/repo");
+      setErrorMessage("Invalid GitHub URL");
       setView('error');
       return;
     }
-
-    const owner = match[1];
-    const repo = match[2].replace('.git', '');
-
-    setProjectName(repo);
+    const [_, owner, repo] = match;
+    setProjectName(repo.replace('.git', ''));
     setView('scanning');
-    setIsGithubLoading(true);
     setScanProgress(10);
     setCurrentLog("Connecting to GitHub...");
-    setIsZipDownloaded(false);
 
     try {
       const response = await fetch('/api/analyze-github', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ owner, repo }),
+        body: JSON.stringify({ owner, repo: repo.replace('.git', '') }),
       });
 
       if (!response.ok) {
@@ -410,74 +437,26 @@ export default function NurQAApp() {
         throw new Error(errorData.error || 'GitHub analysis failed');
       }
 
-      setScanProgress(50);
-      setCurrentLog("Backend received repo. Extracting...");
-
-      // Stream-like progress simulation
-      const processInterval = setInterval(() => {
-        setScanProgress(prev => {
-          if (prev >= 95) {
-            clearInterval(processInterval);
-            return 95;
-          }
-          return prev + 2;
-        });
-
-        const logs = [
-           "Cloning repository...",
-           "Parsing AST structure...",
-           "Connecting to AI...",
-           "Generating fixes..."
-        ];
-        setCurrentLog(logs[Math.floor(Math.random() * logs.length)]);
-      }, 800);
-
       const data = await response.json();
-      clearInterval(processInterval);
-
       setScanProgress(100);
-      setCurrentLog("Analysis Complete");
 
       if (data.success && data.report) {
         setResults(data.report.issues || []);
         setChangelog(data.report.changelog || []);
         setStats(data.report.stats || { errors: 0, warnings: 0, performance: 0, score: 0, coverage: 0 });
-
-        if (data.zipBase64) {
-          setCurrentLog("Downloading fixed project...");
-          const byteCharacters = atob(data.zipBase64);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], {type: 'application/zip'});
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${repo}-fixed.zip`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-          setIsZipDownloaded(true);
-        }
-
-        setTimeout(() => {
-          setView('dashboard');
-        }, 500);
+        setSessionId(data.sessionId);
+        if (data.sessionId) triggerDownload(data.sessionId);
+        setTimeout(() => setView('dashboard'), 500);
       } else {
         throw new Error(data.error || "GitHub analysis failed");
       }
-
     } catch (error) {
-      console.error(error);
       setErrorMessage(error.message);
       setView('error');
-    } finally {
-      setIsGithubLoading(false);
     }
   };
+
+  // --- Render Functions ---
 
   const renderHeader = () => (
      <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-black/20 backdrop-blur-md border-b border-white/5" >
@@ -490,7 +469,6 @@ export default function NurQAApp() {
            <p className="text-[10px] uppercase tracking-widest text-red-400 font-semibold">{t.tagline}</p>
          </div>
        </div>
-
        <div className="flex items-center gap-4" >
          <button onClick={toggleLang} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-sm text-gray-300" >
            <Globe size={16} />
@@ -505,46 +483,49 @@ export default function NurQAApp() {
 
   const renderLanding = () => (
      <main className="min-h-screen pt-32 pb-20 px-6 flex flex-col items-center justify-center relative overflow-hidden" >
-      {/* Background Elements */}
        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-red-600/20 rounded-full blur-[120px] pointer-events-none" />
-
        <div className="max-w-4xl w-full text-center z-10 animate-fade-in" >
-         <h2 className="text-5xl md:text-7xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60" >
-          {t.welcomeMessage}
-         </h2>
-         <p className="text-xl text-gray-400 mb-12 max-w-2xl mx-auto" >
-          NUR QA uses advanced LLMs to analyze your codebase, generate comprehensive tests, and fix bugs before they reach production.
-         </p>
-
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto" >
-           {/* ZIP Upload */}
+         <h2 className="text-5xl md:text-7xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60" >{t.welcomeMessage}</h2>
+         <p className="text-xl text-gray-400 mb-12 max-w-2xl mx-auto" >Advanced NUR QA engine for deep code analysis, instant bug fixing, and compliance testing.</p>
+         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto" >
            <label className="group relative cursor-pointer" >
              <input type="file" accept=".zip" className="hidden" onChange={handleFileUpload} />
-             <div className="h-48 border-2 border-dashed border-white/20 rounded-2xl flex flex-col items-center justify-center gap-4 bg-white/5 backdrop-blur-sm transition-all group-hover:border-red-500/50 group-hover:bg-red-500/5" >
-               <div className="p-4 rounded-full bg-red-500/10 text-red-400 group-hover:scale-110 transition-transform" >
-                 <UploadCloud size={32} />
-               </div>
+             <div className="h-40 border border-white/10 rounded-2xl flex flex-col items-center justify-center gap-3 bg-white/5 backdrop-blur-sm transition-all group-hover:border-red-500/50 group-hover:bg-red-500/5" >
+               <UploadCloud size={28} className="text-red-400 group-hover:scale-110 transition-transform" />
                <div className="text-center" >
-                 <p className="font-semibold text-lg text-gray-200">{t.uploadProject}</p>
-                 <p className="text-sm text-gray-500 mt-1">ZIP, TAR.GZ</p>
+                 <p className="font-semibold text-sm text-gray-200">{t.uploadProject}</p>
+                 <p className="text-[10px] text-gray-500 uppercase mt-1">ZIP / Tar</p>
                </div>
              </div>
            </label>
-
-           {/* GitHub Input Form */}
-           <form onSubmit={handleGithubSubmit} className="h-48 border border-white/10 rounded-2xl flex flex-col items-center justify-center gap-4 bg-white/5 backdrop-blur-sm p-6">
+           <label className="group relative cursor-pointer" >
+             <input
+              type="file"
+              multiple
+              accept=".js,.jsx,.ts,.tsx,.mjs,.cjs,.py,.rb,.java,.kt,.go,.rs,.c,.cpp,.h,.hpp,.cs,.swift,.dart,.lua,.php,.sh,.ps1,.html,.htm,.css,.scss,.sass,.less,.vue,.svelte,.astro,.json,.xml,.yaml,.yml,.toml,.ini,.cfg,.conf,.md,.txt,.markdown,.sql,.graphql,.prisma,.dockerfile,.gitignore,.eslintrc,.prettierrc,.env,.env.example"
+              className="hidden"
+              onChange={handleFilesUpload}
+             />
+             <div className="h-40 border border-white/10 rounded-2xl flex flex-col items-center justify-center gap-3 bg-white/5 backdrop-blur-sm transition-all group-hover:border-red-500/50 group-hover:bg-red-500/5" >
+               <Layers size={28} className="text-orange-400 group-hover:scale-110 transition-transform" />
+               <div className="text-center" >
+                 <p className="font-semibold text-sm text-gray-200">{t.uploadFiles}</p>
+                 <p className="text-[10px] text-gray-500 uppercase mt-1">Direct Multi-File</p>
+               </div>
+             </div>
+           </label>
+           <form onSubmit={handleGithubSubmit} className="h-40 border border-white/10 rounded-2xl flex flex-col items-center justify-center gap-3 bg-white/5 backdrop-blur-sm p-4">
              <div className="w-full">
-               <label className="block text-sm font-medium text-gray-300 mb-2">{t.connectGithub}</label>
                <input
                  type="text"
                  value={githubUrl}
                  onChange={(e) => setGithubUrl(e.target.value)}
-                 placeholder="https://github.com/owner/repo"
-                 className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:border-red-500 outline-none"
+                 placeholder="GitHub Repo URL"
+                 className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-[10px] text-white focus:border-red-500 outline-none"
                />
              </div>
-             <Button variant="primary" icon={Github} disabled={isGithubLoading}>
-               {isGithubLoading ? 'Analyzing...' : 'Analyze Repo'}
+             <Button variant="primary" icon={Github} className="w-full py-2 text-xs" disabled={isGithubLoading}>
+               {isGithubLoading ? '...' : t.connectGithub}
              </Button>
            </form>
          </div>
@@ -554,351 +535,134 @@ export default function NurQAApp() {
 
   const renderScanning = () => (
      <main className="min-h-screen pt-32 px-6 flex flex-col items-center justify-center relative" >
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none"></div>
-
         <div className="w-full max-w-2xl z-10" >
-          <Card className="mb-8 border-red-500/30 bg-black/60" >
+          <Card className="mb-8 border-red-500/30 bg-black/60 text-center" >
             <div className="flex items-center justify-between mb-4" >
-              <div className="flex items-center gap-3" >
-                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                <span className="font-mono text-red-400">{t.processing}</span>
-              </div>
+              <span className="font-mono text-red-400">{t.processing}</span>
               <span className="font-mono text-gray-400">{Math.round(scanProgress)}%</span>
             </div>
-
-            <div className="h-2 w-full bg-gray-800 rounded-full overflow-hidden" >
-              <div
-               className="h-full bg-gradient-to-r from-red-600 to-orange-500 transition-all duration-300"
-               style={{ width: `${scanProgress}%` }}
-             />
+            <div className="h-1 w-full bg-gray-800 rounded-full overflow-hidden mb-4" >
+              <div className="h-full bg-red-600 transition-all duration-300" style={{ width: `${scanProgress}%` }} />
             </div>
-
-            <div className="mt-6 font-mono text-sm text-green-400/80 h-24 overflow-hidden relative" >
-              <div className="flex items-center gap-2 animate-pulse" >
-                <ChevronRight size={14} />
-               {currentLog}
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
-            </div>
+            <div className="font-mono text-[10px] text-green-400/80 animate-pulse">{currentLog}</div>
           </Card>
-
-          <div className="grid grid-cols-3 gap-4" >
-            {['Analyzing Syntax', 'Checking Security', 'Simulating User'].map((item, i) => (
-               <div key={i} className={`p-4 rounded-xl border border-white/5 bg-white/5 text-center transition-all duration-500 ${scanProgress > (i+1)*30 ? 'border-green-500/50 bg-green-500/10 text-green-400' : 'text-gray-500'}`} >
-                 <div className="flex justify-center mb-2" >
-                  {scanProgress > (i+1)*30 ? <CheckCircle2 className="text-green-500" /> : <Loader2 className="animate-spin text-gray-500" />}
-                 </div>
-                 <span className="text-xs font-medium uppercase tracking-wider">{item}</span>
-               </div>
-            ))}
-          </div>
         </div>
-     </main>
-  );
-
-  const renderError = () => (
-     <main className="min-h-screen pt-32 px-6 flex flex-col items-center justify-center relative" >
-       <Card className="max-w-md w-full border-red-500/50 bg-red-900/10 text-center" >
-         <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-6" >
-           <AlertTriangle size={32} className="text-red-500" />
-         </div>
-         <h2 className="text-2xl font-bold text-white mb-2">{t.errorTitle}</h2>
-         <p className="text-gray-400 mb-8">{errorMessage}</p>
-         <Button onClick={() => setView('landing')} variant="outline" icon={RefreshCw} >
-          {t.retry}
-         </Button>
-       </Card>
      </main>
   );
 
   const renderDashboard = () => (
      <main className="min-h-screen pt-24 px-6 pb-12 flex flex-col gap-6 max-w-7xl mx-auto" >
-      {/* Top Stats Row */}
        <div className="grid grid-cols-1 md:grid-cols-4 gap-6" >
          <Card delay={0.1} className="bg-gradient-to-br from-green-900/20 to-black/40 border-green-500/20" >
-           <div className="flex items-center justify-between mb-2" >
-             <span className="text-gray-400 text-sm font-medium">{t.passed}</span>
-             <CheckCircle2 className="text-green-500" size={20} />
-           </div>
-           <div className="text-3xl font-bold text-white" >
-            {stats.score > 90 ? 'Passed' : 'Review'}
-           </div>
-           <div className="text-xs text-green-400 mt-1">Overall Status</div>
+           <div className="flex items-center justify-between mb-2" ><span className="text-gray-400 text-sm font-medium">{t.passed}</span><CheckCircle2 className="text-green-500" size={20} /></div>
+           <div className="text-3xl font-bold text-white">{stats.score > 90 ? 'Passed' : 'Review'}</div>
          </Card>
-
          <Card delay={0.2} className="bg-gradient-to-br from-red-900/20 to-black/40 border-red-500/20" >
-           <div className="flex items-center justify-between mb-2" >
-             <span className="text-gray-400 text-sm font-medium">{t.failed}</span>
-             <Bug className="text-red-500" size={20} />
-           </div>
+           <div className="flex items-center justify-between mb-2" ><span className="text-gray-400 text-sm font-medium">{t.failed}</span><Bug className="text-red-500" size={20} /></div>
            <div className="text-3xl font-bold text-white">{stats.errors}</div>
-           <div className="text-xs text-red-400 mt-1">Critical Issues</div>
          </Card>
-
          <Card delay={0.3} className="bg-gradient-to-br from-blue-900/20 to-black/40 border-blue-500/20" >
-           <div className="flex items-center justify-between mb-2" >
-             <span className="text-gray-400 text-sm font-medium">{t.performanceScore}</span>
-             <Zap className="text-blue-500" size={20} />
-           </div>
-           <div className="text-3xl font-bold text-white" >
-            {stats.score}
-             <span className="text-lg text-gray-500">/100</span>
-           </div>
-           <div className="text-xs text-blue-400 mt-1">Quality Score</div>
+           <div className="flex items-center justify-between mb-2" ><span className="text-gray-400 text-sm font-medium">Quality Score</span><Zap className="text-blue-500" size={20} /></div>
+           <div className="text-3xl font-bold text-white">{stats.score}<span className="text-lg text-gray-500">/100</span></div>
          </Card>
-
          <Card delay={0.4} className="bg-gradient-to-br from-purple-900/20 to-black/40 border-purple-500/20" >
-           <div className="flex items-center justify-between mb-2" >
-             <span className="text-gray-400 text-sm font-medium">{t.testCoverage}</span>
-             <Code2 className="text-purple-500" size={20} />
-           </div>
-           <div className="text-3xl font-bold text-white" >
-             {stats.coverage}%
-           </div>
-           <div className="text-xs text-purple-400 mt-1">Test Coverage</div>
+           <div className="flex items-center justify-between mb-2" ><span className="text-gray-400 text-sm font-medium">Test Coverage</span><Code2 className="text-purple-500" size={20} /></div>
+           <div className="text-3xl font-bold text-white">{stats.coverage}%</div>
          </Card>
        </div>
 
-      {/* Main Content Area */}
-       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1" >
+       <div className="flex flex-wrap gap-3 mb-4">
+         <Button variant="secondary" onClick={exportToPDF} icon={FileText} className="py-2 text-xs">📄 Export PDF</Button>
+         <Button variant="secondary" onClick={exportToExcel} icon={FileJson} className="py-2 text-xs">📊 Export Excel</Button>
+         <Button variant="secondary" onClick={exportToWord} icon={FileCode} className="py-2 text-xs">📝 Export Word</Button>
+         {sessionId && <Button variant="outline" onClick={() => triggerDownload(sessionId)} icon={Download} className="py-2 text-xs">📦 Download Fix ZIP</Button>}
+       </div>
 
-        {/* Left Column: Issues List */}
+       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1" >
          <div className="lg:col-span-2 space-y-6" >
            <div className="flex items-center justify-between" >
-             <h3 className="text-xl font-bold text-white flex items-center gap-2" >
-               <Terminal size={20} className="text-red-500" />
-              {t.results}
-             </h3>
+             <h3 className="text-xl font-bold text-white flex items-center gap-2" ><Terminal size={20} className="text-red-500" />{t.results}</h3>
              <div className="flex gap-2" >
-               <button
-                onClick={() => setActiveTab('issues')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'issues' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-               >
-                Issues
-               </button>
-               <button
-                onClick={() => setActiveTab('changelog')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'changelog' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-               >
-                📜 Changes & Fix History
-               </button>
+               <button onClick={() => setActiveTab('issues')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'issues' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}>Issues</button>
+               <button onClick={() => setActiveTab('changelog')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'changelog' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}>📜 Changes & Fix History</button>
              </div>
            </div>
 
-          {isZipDownloaded && (
-             <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center justify-between mb-4 animate-fade-in-up">
-               <div className="flex items-center gap-3">
-                 <CheckCircle2 className="text-green-500" />
-                 <span className="text-green-400 font-medium">Fixed project downloaded successfully!</span>
-               </div>
-               <Button variant="outline" icon={Download} onClick={() => window.location.reload()}>
-                 Analyze Another
-               </Button>
-             </div>
-          )}
-
           {activeTab === 'issues' && (
-            <>
-              {results.length === 0 ? (
-                <div className="p-12 text-center border border-white/10 rounded-xl bg-white/5" >
-                   <CheckCircle2 className="mx-auto text-green-500 mb-4" size={48} />
-                   <h3 className="text-xl font-bold text-white">No Issues Found!</h3>
-                   <p className="text-gray-400 mt-2">Your code looks clean.</p>
-                </div>
-              ) : (
-                 <div className="space-y-4" >
-                  {results.map((result, idx) => (
-                     <div
-                      key={idx}
-                      className="bg-black/40 border border-white/10 rounded-xl p-5 hover:border-red-500/30 transition-colors group animate-fade-in-up"
-                      style={{ animationDelay: `${0.5 + (idx * 0.1)}s` }}
-                     >
-                       <div className="flex items-start justify-between mb-3" >
-                         <div className="flex items-center gap-3" >
-                           <Badge type={result.type} text={result.type.toUpperCase()} />
-                           <span className="font-mono text-sm text-gray-400 flex items-center gap-1" >
-                             <FileCode size={12} />
-                            {result.file}:{result.line}
-                           </span>
-                         </div>
-                       </div>
-
-                       <h4 className="text-lg font-medium text-gray-200 mb-2">{result.message}</h4>
-                       <p className="text-gray-500 text-sm mb-4">{result.suggestion}</p>
-
-                      {result.fix && (
-                         <div className="bg-black/60 rounded-lg p-4 border border-white/5 relative group/code" >
-                           <div className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity" >
-                              <button className="text-xs bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded">Copy</button>
-                           </div>
-                           <pre className="font-mono text-sm text-green-400 overflow-x-auto" >
-                             <code>{result.fix}</code>
-                           </pre>
-                         </div>
-                      )}
-                     </div>
-                  ))}
+             <div className="space-y-4" >
+              {results.length === 0 ? <p className="text-gray-500 text-center py-10">No issues found.</p> : results.map((result, idx) => (
+                 <div key={idx} className="bg-black/40 border border-white/10 rounded-xl p-5 hover:border-red-500/30 transition-colors group animate-fade-in-up">
+                   <div className="flex items-start justify-between mb-3" >
+                     <div className="flex items-center gap-3" ><Badge type={result.type} text={result.type.toUpperCase()} /><span className="font-mono text-sm text-gray-400">{result.file}:{result.line}</span></div>
+                   </div>
+                   <h4 className="text-lg font-medium text-gray-200 mb-2">{result.message}</h4>
+                   <p className="text-gray-500 text-sm mb-4">{result.suggestion}</p>
+                   {result.fix && <pre className="bg-black/60 rounded-lg p-4 border border-white/5 font-mono text-sm text-green-400 overflow-x-auto"><code>{result.fix}</code></pre>}
                  </div>
-              )}
-            </>
+              ))}
+             </div>
           )}
 
           {activeTab === 'changelog' && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="overflow-x-auto bg-black/40 border border-white/10 rounded-xl">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-white/5 text-gray-400 uppercase text-xs font-semibold">
-                    <tr>
-                      <th className="px-6 py-4">File Path</th>
-                      <th className="px-6 py-4">Bug Type</th>
-                      <th className="px-6 py-4">Fix Applied</th>
-                      <th className="px-6 py-4">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {changelog.length === 0 ? (
-                      <tr>
-                        <td colSpan="4" className="px-6 py-12 text-center text-gray-500">No modifications recorded.</td>
-                      </tr>
-                    ) : (
-                      changelog.map((entry, idx) => (
-                        <tr key={idx} className="hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4 font-mono text-red-400">{entry.file}</td>
-                          <td className="px-6 py-4">
-                            <Badge type={entry.bugType} text={entry.bugType.toUpperCase()} />
-                          </td>
-                          <td className="px-6 py-4 text-gray-300">{entry.fixApplied}</td>
-                          <td className="px-6 py-4">
-                            <span className="flex items-center gap-1 text-green-400">
-                              <CheckCircle2 size={14} /> {entry.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+             <div className="overflow-x-auto bg-black/40 border border-white/10 rounded-xl">
+               <table className="w-full text-left text-sm">
+                 <thead className="bg-white/5 text-gray-400 uppercase text-xs font-semibold">
+                   <tr><th className="px-6 py-4">File Path</th><th className="px-6 py-4">Bug Type</th><th className="px-6 py-4">Fix Applied</th><th className="px-6 py-4">Status</th></tr>
+                 </thead>
+                 <tbody className="divide-y divide-white/5">
+                  {changelog.map((entry, idx) => (
+                     <tr key={idx} className="hover:bg-white/5">
+                       <td className="px-6 py-4 font-mono text-red-400">{entry.file}</td>
+                       <td className="px-6 py-4"><Badge type={entry.bugType} text={entry.bugType.toUpperCase()} /></td>
+                       <td className="px-6 py-4 text-gray-300">{entry.fixApplied}</td>
+                       <td className="px-6 py-4 text-green-400">✅ {entry.status}</td>
+                     </tr>
+                  ))}
+                 </tbody>
+               </table>
+             </div>
           )}
          </div>
 
-        {/* Right Column: Assistant / Chat */}
          <div className="lg:col-span-1" >
            <Card className="h-full flex flex-col bg-gradient-to-b from-black/60 to-red-900/10 border-red-500/20" >
-             <div className="flex items-center gap-3 mb-6 pb-4 border-b border-white/10" >
-               <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center animate-pulse" >
-                 <Cpu size={16} className="text-white" />
-               </div>
-               <div>
-                 <h3 className="font-bold text-white">NUR Assistant</h3>
-                 <p className="text-xs text-green-400 flex items-center gap-1" >
-                   <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                  Online via Groq
-                 </p>
-               </div>
-             </div>
-
+             <div className="flex items-center gap-3 mb-6 pb-4 border-b border-white/10" ><div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center"><Cpu size={16} className="text-white" /></div><h3 className="font-bold text-white">NUR Assistant</h3></div>
              <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar mb-4 min-h-[300px]" >
                {chatMessages.map((msg, idx) => (
-                 <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                   <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold ${msg.role === 'ai' ? 'bg-red-900/50 text-red-400' : 'bg-blue-900/50 text-blue-400'}`}>
-                     {msg.role === 'ai' ? 'AI' : 'You'}
-                   </div>
-                   <div className={`rounded-2xl p-3 text-sm max-w-[85%] ${msg.role === 'ai' ? 'bg-white/5 rounded-tl-none text-gray-300' : 'bg-red-600/20 rounded-tr-none text-white'}`}>
-                     {msg.content}
-                   </div>
-                 </div>
+                 <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}><div className={`rounded-2xl p-3 text-sm max-w-[85%] ${msg.role === 'ai' ? 'bg-white/5 text-gray-300' : 'bg-red-600/20 text-white'}`}>{msg.content}</div></div>
                ))}
-               {isTyping && (
-                 <div className="flex gap-3">
-                   <div className="w-8 h-8 rounded-full bg-red-900/50 flex-shrink-0 flex items-center justify-center text-xs font-bold text-red-400">AI</div>
-                   <div className="bg-white/5 rounded-2xl rounded-tl-none p-3 text-sm text-gray-300 flex items-center gap-1">
-                     <Loader2 size={14} className="animate-spin" /> Thinking...
-                   </div>
-                 </div>
-               )}
+               {isTyping && <div className="text-xs text-gray-500 animate-pulse">Thinking...</div>}
                <div ref={chatEndRef} />
              </div>
-
-             <div className="mt-auto" >
-               <form onSubmit={handleSendMessage} className="relative" >
-                 <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder={t.chatPlaceholder}
-                  className="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-4 pr-12 text-sm text-white focus:outline-none focus:border-red-500/50 transition-colors"
-                />
-                 <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-red-600 rounded-lg text-white hover:bg-red-500 transition-colors" >
-                   <Send size={16} />
-                 </button>
-               </form>
-             </div>
+             <form onSubmit={handleSendMessage} className="relative" >
+               <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder={t.chatPlaceholder} className="w-full bg-black/40 border border-white/10 rounded-xl py-3 pl-4 pr-12 text-sm text-white focus:border-red-500/50 outline-none" />
+               <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-red-600 rounded-lg text-white hover:bg-red-500 transition-colors" ><Send size={16} /></button>
+             </form>
            </Card>
          </div>
-
        </div>
      </main>
   );
 
   return (
      <div className={`min-h-screen font-sans selection:bg-red-500/30 selection:text-white ${isDark ? 'bg-black text-white' : 'bg-gray-50 text-gray-900'}`} >
-       <Head>
-         <title>NUR QA - Intelligent Testing</title>
-         <meta name="viewport" content="width=device-width, initial-scale=1" />
-       </Head>
-
-      {/* Pomegranate Background Effect */}
+       <Head><title>NUR QA v2.0 - Intelligent Engine</title></Head>
        <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none" >
-        {/* Deep Red Base */}
          <div className="absolute inset-0 bg-gradient-to-br from-[#1a0505] via-[#0f0f0f] to-[#000000]" />
-
-        {/* Abstract Seeds/Shapes - Blurred heavily for texture */}
-         <div className="absolute top-[-10%] right-[-10%] w-[600px] h-[600px] bg-red-900/20 rounded-full blur-[100px] mix-blend-screen animate-pulse-slow" />
-         <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-red-800/10 rounded-full blur-[80px] mix-blend-screen" />
-
-        {/* Grain Overlay */}
-         <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: `url("image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} ></div>
+         <div className="absolute top-[-10%] right-[-10%] w-[600px] h-[600px] bg-red-900/20 rounded-full blur-[100px] animate-pulse" />
        </div>
-
-      {renderHeader()}
-
+       {renderHeader()}
        <div className="relative z-10" >
         {view === 'landing' && renderLanding()}
         {view === 'scanning' && renderScanning()}
         {view === 'dashboard' && renderDashboard()}
         {view === 'error' && renderError()}
        </div>
-
        <style jsx global>{`
-        @keyframes shimmer {
-          100% { transform: translateX(100%); }
-        }
-        .animate-shimmer {
-          animation: shimmer 2s infinite;
-        }
-        .animate-pulse-slow {
-          animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fade-in-up {
-            animation: fadeInUp 0.5s ease-out forwards;
-        }
-         /* Custom Scrollbar for Chat */
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 4px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.05);
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(239, 68, 68, 0.3);
-          border-radius: 4px;
-         }
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in-up { animation: fadeInUp 0.5s ease-out forwards; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(239, 68, 68, 0.3); border-radius: 4px; }
       `}</style>
      </div>
   );

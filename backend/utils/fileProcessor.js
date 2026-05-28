@@ -4,9 +4,13 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 const TEXT_EXTENSIONS = new Set([
-  '.js', '.jsx', '.ts', '.tsx', '.py', '.html', '.css', '.json',
-  '.md', '.yaml', '.yml', '.xml', '.php', '.c', '.cpp', '.h',
-  '.java', '.rb', '.go', '.rs', '.sql', '.sh', '.txt', '.env'
+  '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.py', '.rb', '.java',
+  '.kt', '.go', '.rs', '.c', '.cpp', '.h', '.hpp', '.cs', '.swift',
+  '.dart', '.lua', '.php', '.sh', '.ps1', '.html', '.htm', '.css',
+  '.scss', '.sass', '.less', '.vue', '.svelte', '.astro', '.json',
+  '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.md',
+  '.txt', '.markdown', '.sql', '.graphql', '.prisma', '.dockerfile',
+  '.gitignore', '.eslintrc', '.prettierrc', '.env', '.env.example'
 ]);
 
 function isTextFile(filePath, buffer) {
@@ -56,10 +60,9 @@ async function processUploadedFile(buffer) {
       return prioB - prioA;
     });
 
-    // Limit AI context to top 15 most relevant files to save tokens
     const selectedFiles = aiContextFiles.slice(0, 15);
 
-    console.log(`AI Context: ${selectedFiles.length} files. Total files: ${codebase.length}`);
+    console.log(`ZIP Upload: ${selectedFiles.length} files for AI | Total files: ${codebase.length}`);
 
     return {
       allFiles: codebase,
@@ -70,6 +73,57 @@ async function processUploadedFile(buffer) {
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
     throw new Error(`Failed to process ZIP: ${error.message}`);
   }
+}
+
+/**
+ * NUR QA v2.0: Process Direct Multi-File Uploads
+ */
+async function processDirectFiles(multerFiles) {
+  const codebase = [];
+  let skipped = 0;
+  let valid = 0;
+
+  for (const file of multerFiles) {
+    const isText = isTextFile(file.originalname, file.buffer);
+    let content = null;
+    let skipAI = true;
+
+    if (isText) {
+      content = file.buffer.toString('utf-8');
+      // AI Context Rule: Max 100KB for direct files AI context
+      if (file.buffer.length < 100 * 1024) {
+        skipAI = false;
+        valid++;
+      } else {
+        skipped++;
+        console.log(`Skipping ${file.originalname} from AI context: too large (${(file.buffer.length/1024).toFixed(1)}KB)`);
+      }
+    } else {
+      skipped++;
+      console.log(`Skipping binary file ${file.originalname} from AI context`);
+    }
+
+    codebase.push({
+      path: file.originalname,
+      content: content,
+      buffer: file.buffer,
+      isText: isText,
+      size: file.buffer.length,
+      skipAI: skipAI
+    });
+  }
+
+  // Sort and limit AI context
+  const aiContextFiles = codebase.filter(f => !f.skipAI);
+  aiContextFiles.sort((a, b) => getPriority(b.path) - getPriority(a.path));
+  const selectedFiles = aiContextFiles.slice(0, 20); // Slightly more for direct files
+
+  console.log(`📂 Direct Upload: ${codebase.length} files | ✅ ${valid} valid | ⏭️ ${skipped} skipped`);
+
+  return {
+    allFiles: codebase,
+    aiContext: selectedFiles
+  };
 }
 
 function readDirectoryRecursive(rootDir, currentDir, codebase) {
@@ -91,7 +145,7 @@ function readDirectoryRecursive(rootDir, currentDir, codebase) {
 
         if (isText) {
           content = buffer.toString('utf-8');
-          // AI Context Rule: Max 150KB for AI context
+          // AI Context Rule: Max 150KB for AI context in ZIPs
           if (buffer.length < 150000) {
             skipAI = false;
           } else {
@@ -116,4 +170,4 @@ function readDirectoryRecursive(rootDir, currentDir, codebase) {
   }
 }
 
-module.exports = { processUploadedFile };
+module.exports = { processUploadedFile, processDirectFiles };
