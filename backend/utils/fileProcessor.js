@@ -3,7 +3,24 @@ const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
-const ALLOWED_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.css', '.html', '.json', '.py'];
+const TEXT_EXTENSIONS = new Set([
+  '.js', '.jsx', '.ts', '.tsx', '.py', '.html', '.css', '.json',
+  '.md', '.yaml', '.yml', '.xml', '.php', '.c', '.cpp', '.h',
+  '.java', '.rb', '.go', '.rs', '.sql', '.sh', '.txt', '.env'
+]);
+
+function isTextFile(filePath, buffer) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (TEXT_EXTENSIONS.has(ext)) return true;
+
+  if (buffer) {
+    for (let i = 0; i < Math.min(buffer.length, 1024); i++) {
+      if (buffer[i] === 0) return false;
+    }
+    return true;
+  }
+  return false;
+}
 
 // Priority Score: Higher is more important
 const getPriority = (filename) => {
@@ -31,18 +48,23 @@ async function processUploadedFile(buffer) {
 
     fs.rmSync(tempDir, { recursive: true, force: true });
 
-    // SMART SORTING: Sort by priority, then take top 20 files
-    codebase.sort((a, b) => {
+    // For AI Context: Sort text files by priority
+    const aiContextFiles = codebase.filter(f => !f.skipAI);
+    aiContextFiles.sort((a, b) => {
       const prioA = getPriority(a.path);
       const prioB = getPriority(b.path);
-      return prioB - prioA; // Descending order
+      return prioB - prioA;
     });
 
-    // Limit to top 20 files to save tokens
-    const selectedFiles = codebase.slice(0, 10);
-    
-    console.log(`Selected ${selectedFiles.length} most relevant files out of ${codebase.length}`);
-    return selectedFiles;
+    // Limit AI context to top 15 most relevant files to save tokens
+    const selectedFiles = aiContextFiles.slice(0, 15);
+
+    console.log(`AI Context: ${selectedFiles.length} files. Total files: ${codebase.length}`);
+
+    return {
+      allFiles: codebase,
+      aiContext: selectedFiles
+    };
 
   } catch (error) {
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
@@ -55,21 +77,40 @@ function readDirectoryRecursive(rootDir, currentDir, codebase) {
   for (const file of files) {
     const filePath = path.join(currentDir, file);
     const stat = fs.statSync(filePath);
+    const relativePath = path.relative(rootDir, filePath);
+
     if (stat.isDirectory()) {
       if (['node_modules', '.git', '.next', 'dist', 'build'].includes(file)) continue;
       readDirectoryRecursive(rootDir, filePath, codebase);
     } else {
-      const ext = path.extname(file).toLowerCase();
-      if (ALLOWED_EXTENSIONS.includes(ext)) {
-        try {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          if (content.length < 15000) { // Skip huge files
-            codebase.push({
-              path: path.relative(rootDir, filePath),
-              content: content
-            });
+      try {
+        const buffer = fs.readFileSync(filePath);
+        const isText = isTextFile(file, buffer);
+        let content = null;
+        let skipAI = true;
+
+        if (isText) {
+          content = buffer.toString('utf-8');
+          // AI Context Rule: Max 150KB for AI context
+          if (buffer.length < 150000) {
+            skipAI = false;
+          } else {
+            console.log(`Skipping ${relativePath} from AI context: too large (${(buffer.length/1024).toFixed(1)}KB)`);
           }
-        } catch (e) { console.warn(`Skip: ${filePath}`); }
+        } else {
+          console.log(`Skipping binary file ${relativePath} from AI context`);
+        }
+
+        codebase.push({
+          path: relativePath,
+          content: content,
+          buffer: buffer,
+          isText: isText,
+          size: buffer.length,
+          skipAI: skipAI
+        });
+      } catch (e) {
+        console.warn(`Skip: ${filePath}`, e.message);
       }
     }
   }

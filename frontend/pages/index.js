@@ -1,20 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
-import { 
-  UploadCloud, 
-  Github, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Bug, 
-  Code2, 
-  Zap, 
-  Settings, 
-  Globe, 
-  Moon, 
-  Sun, 
-  ChevronRight, 
-  Terminal, 
-  Cpu, 
+import {
+  UploadCloud,
+  Github,
+  CheckCircle2,
+  AlertTriangle,
+  Bug,
+  Code2,
+  Zap,
+  Settings,
+  Globe,
+  Moon,
+  Sun,
+  ChevronRight,
+  Terminal,
+  Cpu,
   ShieldCheck,
   Loader2,
   RefreshCw,
@@ -138,7 +138,7 @@ const TRANSLATIONS = {
 
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, icon: Icon }) => {
   const baseStyle = "relative px-6 py-3 rounded-xl font-medium transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden group ";
-  
+
   const variants = {
     primary: "bg-gradient-to-r from-red-600 to-red-800 text-white shadow-lg shadow-red-900/20 hover:shadow-red-600/40 hover:scale-[1.02] ",
     secondary: "bg-white/5 border border-white/10 text-gray-200 hover:bg-white/10 backdrop-blur-md ",
@@ -147,8 +147,8 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
   };
 
   return (
-     <button 
-      onClick={onClick} 
+     <button
+      onClick={onClick}
       disabled={disabled}
       className={`${baseStyle} ${variants[variant]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}
    >
@@ -162,7 +162,7 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
 };
 
 const Card = ({ children, className = "", delay = 0 }) => (
-   <div 
+   <div
     className={`bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl ${className}`}
     style={{ animation: `fadeInUp 0.5s ease-out ${delay}s forwards`, opacity: 0, transform: 'translateY(20px)' }}
    >
@@ -178,7 +178,7 @@ const Badge = ({ type, text }) => {
     performance: "bg-blue-500/20 text-blue-400 border-blue-500/30 ",
     info: "bg-purple-500/20 text-purple-400 border-purple-500/30 "
   };
-  
+
   return (
      <span className={`px-2 py-1 rounded-md text-xs font-mono border ${colors[type] || colors.info}`} >
       {text}
@@ -197,10 +197,12 @@ export default function NurQAApp() {
   const [scanProgress, setScanProgress] = useState(0);
   const [currentLog, setCurrentLog] = useState("");
   const [results, setResults] = useState([]);
+  const [changelog, setChangelog] = useState([]);
+  const [stats, setStats] = useState({ errors: 0, warnings: 0, performance: 0, score: 0, coverage: 0 });
   const [activeTab, setActiveTab] = useState('issues');
   const [errorMessage, setErrorMessage] = useState("");
   const [isZipDownloaded, setIsZipDownloaded] = useState(false);
-  
+
   // GitHub State
   const [githubUrl, setGithubUrl] = useState("");
   const [isGithubLoading, setIsGithubLoading] = useState(false);
@@ -255,9 +257,9 @@ export default function NurQAApp() {
     // Simulate AI Response
     setTimeout(() => {
       let aiResponseContent = "";
-      
+
       if (chatInput.toLowerCase().includes("fix") || chatInput.toLowerCase().includes("ուղղել")) {
-        aiResponseContent = "I have already generated the fixed files. Please check your downloads folder for 'NUR_QA_Fixed_Project.zip'.";
+        aiResponseContent = "I have analyzed and fixed the codebase. You can see the detailed changelog in the 'Changes & Fix History' tab.";
       } else if (chatInput.toLowerCase().includes("security") || chatInput.toLowerCase().includes("անվտանգություն")) {
         aiResponseContent = "Security is a priority. I noticed some potential vulnerabilities in your input handling. Always validate and sanitize user data.";
       } else {
@@ -317,7 +319,7 @@ export default function NurQAApp() {
           }
           return prev + 2;
         });
-        
+
         const logs = [
            "Parsing AST structure...",
            "Identifying component boundaries...",
@@ -328,43 +330,42 @@ export default function NurQAApp() {
         setCurrentLog(logs[Math.floor(Math.random() * logs.length)]);
       }, 800);
 
-      // Check Content Type to determine if it's a ZIP or JSON
-      const contentType = response.headers.get("content-type");
+      const data = await response.json();
+      clearInterval(processInterval);
 
-      if (contentType && contentType.includes("application/zip")) {
-        // Handle ZIP Download
-        setCurrentLog("Generating fixed project...");
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = "NUR_QA_Fixed_Project.zip";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(url);
-        
-        setScanProgress(100);
-        setCurrentLog("Fixed project downloaded!");
-        setIsZipDownloaded(true);
-        
-        setTimeout(() => {
-          setResults([]); 
-          setView('dashboard');
-        }, 1000);
+      setScanProgress(100);
+      setCurrentLog("Analysis Complete");
 
-      } else {
-        // Handle JSON Response (if no fixes were made)
-        const data = await response.json();
-        clearInterval(processInterval);
-        
-        setScanProgress(100);
-        setCurrentLog("Analysis Complete");
-        
+      if (data.success && data.report) {
+        setResults(data.report.issues || []);
+        setChangelog(data.report.changelog || []);
+        setStats(data.report.stats || { errors: 0, warnings: 0, performance: 0, score: 0, coverage: 0 });
+
+        if (data.zipBase64) {
+          setCurrentLog("Downloading fixed project...");
+          const byteCharacters = atob(data.zipBase64);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], {type: 'application/zip'});
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = "NUR_QA_Fixed_Project.zip";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+          setIsZipDownloaded(true);
+        }
+
         setTimeout(() => {
-          setResults(data.issues || []);
           setView('dashboard');
         }, 500);
+      } else {
+        throw new Error(data.error || "Analysis failed");
       }
 
     } catch (error) {
@@ -421,7 +422,7 @@ export default function NurQAApp() {
           }
           return prev + 2;
         });
-        
+
         const logs = [
            "Cloning repository...",
            "Parsing AST structure...",
@@ -431,41 +432,42 @@ export default function NurQAApp() {
         setCurrentLog(logs[Math.floor(Math.random() * logs.length)]);
       }, 800);
 
-      // Check Content Type
-      const contentType = response.headers.get("content-type");
-      
-      if (contentType && contentType.includes("application/zip")) {
-        setCurrentLog("Generating fixed project...");
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${repo}-fixed.zip`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(url);
-        
-        setScanProgress(100);
-        setCurrentLog("Fixed project downloaded!");
-        setIsZipDownloaded(true);
-        
-        setTimeout(() => {
-          setResults([]); 
-          setView('dashboard');
-        }, 1000);
+      const data = await response.json();
+      clearInterval(processInterval);
 
-      } else {
-        const data = await response.json();
-        clearInterval(processInterval);
-        
-        setScanProgress(100);
-        setCurrentLog("Analysis Complete");
-        
+      setScanProgress(100);
+      setCurrentLog("Analysis Complete");
+
+      if (data.success && data.report) {
+        setResults(data.report.issues || []);
+        setChangelog(data.report.changelog || []);
+        setStats(data.report.stats || { errors: 0, warnings: 0, performance: 0, score: 0, coverage: 0 });
+
+        if (data.zipBase64) {
+          setCurrentLog("Downloading fixed project...");
+          const byteCharacters = atob(data.zipBase64);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], {type: 'application/zip'});
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${repo}-fixed.zip`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+          setIsZipDownloaded(true);
+        }
+
         setTimeout(() => {
-          setResults(data.issues || []);
           setView('dashboard');
         }, 500);
+      } else {
+        throw new Error(data.error || "GitHub analysis failed");
       }
 
     } catch (error) {
@@ -505,7 +507,7 @@ export default function NurQAApp() {
      <main className="min-h-screen pt-32 pb-20 px-6 flex flex-col items-center justify-center relative overflow-hidden" >
       {/* Background Elements */}
        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-red-600/20 rounded-full blur-[120px] pointer-events-none" />
-      
+
        <div className="max-w-4xl w-full text-center z-10 animate-fade-in" >
          <h2 className="text-5xl md:text-7xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60" >
           {t.welcomeMessage}
@@ -533,8 +535,8 @@ export default function NurQAApp() {
            <form onSubmit={handleGithubSubmit} className="h-48 border border-white/10 rounded-2xl flex flex-col items-center justify-center gap-4 bg-white/5 backdrop-blur-sm p-6">
              <div className="w-full">
                <label className="block text-sm font-medium text-gray-300 mb-2">{t.connectGithub}</label>
-               <input 
-                 type="text" 
+               <input
+                 type="text"
                  value={githubUrl}
                  onChange={(e) => setGithubUrl(e.target.value)}
                  placeholder="https://github.com/owner/repo"
@@ -553,7 +555,7 @@ export default function NurQAApp() {
   const renderScanning = () => (
      <main className="min-h-screen pt-32 px-6 flex flex-col items-center justify-center relative" >
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none"></div>
-       
+
         <div className="w-full max-w-2xl z-10" >
           <Card className="mb-8 border-red-500/30 bg-black/60" >
             <div className="flex items-center justify-between mb-4" >
@@ -563,9 +565,9 @@ export default function NurQAApp() {
               </div>
               <span className="font-mono text-gray-400">{Math.round(scanProgress)}%</span>
             </div>
-           
+
             <div className="h-2 w-full bg-gray-800 rounded-full overflow-hidden" >
-              <div 
+              <div
                className="h-full bg-gradient-to-r from-red-600 to-orange-500 transition-all duration-300"
                style={{ width: `${scanProgress}%` }}
              />
@@ -619,9 +621,9 @@ export default function NurQAApp() {
              <CheckCircle2 className="text-green-500" size={20} />
            </div>
            <div className="text-3xl font-bold text-white" >
-            {results.filter(r => !r.type || r.type === 'success').length + Math.floor(Math.random() * 100) + 50}
+            {stats.score > 90 ? 'Passed' : 'Review'}
            </div>
-           <div className="text-xs text-green-400 mt-1">Checks passed</div>
+           <div className="text-xs text-green-400 mt-1">Overall Status</div>
          </Card>
 
          <Card delay={0.2} className="bg-gradient-to-br from-red-900/20 to-black/40 border-red-500/20" >
@@ -629,8 +631,8 @@ export default function NurQAApp() {
              <span className="text-gray-400 text-sm font-medium">{t.failed}</span>
              <Bug className="text-red-500" size={20} />
            </div>
-           <div className="text-3xl font-bold text-white">{results.filter(r => r.type === 'error').length}</div>
-           <div className="text-xs text-red-400 mt-1">Requires attention</div>
+           <div className="text-3xl font-bold text-white">{stats.errors}</div>
+           <div className="text-xs text-red-400 mt-1">Critical Issues</div>
          </Card>
 
          <Card delay={0.3} className="bg-gradient-to-br from-blue-900/20 to-black/40 border-blue-500/20" >
@@ -639,10 +641,10 @@ export default function NurQAApp() {
              <Zap className="text-blue-500" size={20} />
            </div>
            <div className="text-3xl font-bold text-white" >
-            {Math.max(0, 100 - (results.length * 5))}
+            {stats.score}
              <span className="text-lg text-gray-500">/100</span>
            </div>
-           <div className="text-xs text-blue-400 mt-1">Based on issues</div>
+           <div className="text-xs text-blue-400 mt-1">Quality Score</div>
          </Card>
 
          <Card delay={0.4} className="bg-gradient-to-br from-purple-900/20 to-black/40 border-purple-500/20" >
@@ -651,15 +653,15 @@ export default function NurQAApp() {
              <Code2 className="text-purple-500" size={20} />
            </div>
            <div className="text-3xl font-bold text-white" >
-             {Math.min(100, Math.max(40, 100 - (results.filter(r => r.type === 'warning').length * 2)))}%
+             {stats.coverage}%
            </div>
-           <div className="text-xs text-purple-400 mt-1">Estimated</div>
+           <div className="text-xs text-purple-400 mt-1">Test Coverage</div>
          </Card>
        </div>
 
       {/* Main Content Area */}
        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1" >
-        
+
         {/* Left Column: Issues List */}
          <div className="lg:col-span-2 space-y-6" >
            <div className="flex items-center justify-between" >
@@ -668,17 +670,17 @@ export default function NurQAApp() {
               {t.results}
              </h3>
              <div className="flex gap-2" >
-               <button 
+               <button
                 onClick={() => setActiveTab('issues')}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'issues' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}
                >
                 Issues
                </button>
-               <button 
-                onClick={() => setActiveTab('coverage')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'coverage' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+               <button
+                onClick={() => setActiveTab('changelog')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'changelog' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}
                >
-                Files Analyzed
+                📜 Changes & Fix History
                </button>
              </div>
            </div>
@@ -695,46 +697,89 @@ export default function NurQAApp() {
              </div>
           )}
 
-          {results.length === 0 && !isZipDownloaded ? (
-              <div className="p-12 text-center border border-white/10 rounded-xl bg-white/5" >
-                 <CheckCircle2 className="mx-auto text-green-500 mb-4" size={48} />
-                 <h3 className="text-xl font-bold text-white">No Issues Found!</h3>
-                 <p className="text-gray-400 mt-2">Your code looks clean.</p>
-              </div>
-          ) : (
-             <div className="space-y-4" >
-              {results.map((result, idx) => (
-                 <div
-                  key={idx}
-                  className="bg-black/40 border border-white/10 rounded-xl p-5 hover:border-red-500/30 transition-colors group animate-fade-in-up"
-                  style={{ animationDelay: `${0.5 + (idx * 0.1)}s` }}
-                 >
-                   <div className="flex items-start justify-between mb-3" >
-                     <div className="flex items-center gap-3" >
-                       <Badge type={result.type} text={result.type.toUpperCase()} />
-                       <span className="font-mono text-sm text-gray-400 flex items-center gap-1" >
-                         <FileCode size={12} />
-                        {result.file}:{result.line}
-                       </span>
-                     </div>
-                   </div>
-                  
-                   <h4 className="text-lg font-medium text-gray-200 mb-2">{result.message}</h4>
-                   <p className="text-gray-500 text-sm mb-4">{result.suggestion}</p>
-                  
-                  {result.fix && (
-                     <div className="bg-black/60 rounded-lg p-4 border border-white/5 relative group/code" >
-                       <div className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity" >
-                          <button className="text-xs bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded">Copy</button>
+          {activeTab === 'issues' && (
+            <>
+              {results.length === 0 ? (
+                <div className="p-12 text-center border border-white/10 rounded-xl bg-white/5" >
+                   <CheckCircle2 className="mx-auto text-green-500 mb-4" size={48} />
+                   <h3 className="text-xl font-bold text-white">No Issues Found!</h3>
+                   <p className="text-gray-400 mt-2">Your code looks clean.</p>
+                </div>
+              ) : (
+                 <div className="space-y-4" >
+                  {results.map((result, idx) => (
+                     <div
+                      key={idx}
+                      className="bg-black/40 border border-white/10 rounded-xl p-5 hover:border-red-500/30 transition-colors group animate-fade-in-up"
+                      style={{ animationDelay: `${0.5 + (idx * 0.1)}s` }}
+                     >
+                       <div className="flex items-start justify-between mb-3" >
+                         <div className="flex items-center gap-3" >
+                           <Badge type={result.type} text={result.type.toUpperCase()} />
+                           <span className="font-mono text-sm text-gray-400 flex items-center gap-1" >
+                             <FileCode size={12} />
+                            {result.file}:{result.line}
+                           </span>
+                         </div>
                        </div>
-                       <pre className="font-mono text-sm text-green-400 overflow-x-auto" >
-                         <code>{result.fix}</code>
-                       </pre>
+
+                       <h4 className="text-lg font-medium text-gray-200 mb-2">{result.message}</h4>
+                       <p className="text-gray-500 text-sm mb-4">{result.suggestion}</p>
+
+                      {result.fix && (
+                         <div className="bg-black/60 rounded-lg p-4 border border-white/5 relative group/code" >
+                           <div className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity" >
+                              <button className="text-xs bg-white/10 hover:bg-white/20 text-white px-2 py-1 rounded">Copy</button>
+                           </div>
+                           <pre className="font-mono text-sm text-green-400 overflow-x-auto" >
+                             <code>{result.fix}</code>
+                           </pre>
+                         </div>
+                      )}
                      </div>
-                  )}
+                  ))}
                  </div>
-              ))}
-             </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'changelog' && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="overflow-x-auto bg-black/40 border border-white/10 rounded-xl">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-white/5 text-gray-400 uppercase text-xs font-semibold">
+                    <tr>
+                      <th className="px-6 py-4">File Path</th>
+                      <th className="px-6 py-4">Bug Type</th>
+                      <th className="px-6 py-4">Fix Applied</th>
+                      <th className="px-6 py-4">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {changelog.length === 0 ? (
+                      <tr>
+                        <td colSpan="4" className="px-6 py-12 text-center text-gray-500">No modifications recorded.</td>
+                      </tr>
+                    ) : (
+                      changelog.map((entry, idx) => (
+                        <tr key={idx} className="hover:bg-white/5 transition-colors">
+                          <td className="px-6 py-4 font-mono text-red-400">{entry.file}</td>
+                          <td className="px-6 py-4">
+                            <Badge type={entry.bugType} text={entry.bugType.toUpperCase()} />
+                          </td>
+                          <td className="px-6 py-4 text-gray-300">{entry.fixApplied}</td>
+                          <td className="px-6 py-4">
+                            <span className="flex items-center gap-1 text-green-400">
+                              <CheckCircle2 size={14} /> {entry.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
          </div>
 
@@ -778,8 +823,8 @@ export default function NurQAApp() {
 
              <div className="mt-auto" >
                <form onSubmit={handleSendMessage} className="relative" >
-                 <input 
-                  type="text" 
+                 <input
+                  type="text"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
                   placeholder={t.chatPlaceholder}
@@ -808,17 +853,17 @@ export default function NurQAApp() {
        <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none" >
         {/* Deep Red Base */}
          <div className="absolute inset-0 bg-gradient-to-br from-[#1a0505] via-[#0f0f0f] to-[#000000]" />
-        
+
         {/* Abstract Seeds/Shapes - Blurred heavily for texture */}
          <div className="absolute top-[-10%] right-[-10%] w-[600px] h-[600px] bg-red-900/20 rounded-full blur-[100px] mix-blend-screen animate-pulse-slow" />
          <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-red-800/10 rounded-full blur-[80px] mix-blend-screen" />
-        
+
         {/* Grain Overlay */}
          <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: `url("image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }} ></div>
        </div>
 
       {renderHeader()}
-      
+
        <div className="relative z-10" >
         {view === 'landing' && renderLanding()}
         {view === 'scanning' && renderScanning()}
