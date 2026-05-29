@@ -1,3 +1,7 @@
+import http from 'http';
+import https from 'https';
+import { URL } from 'url';
+
 export const config = {
   api: {
     bodyParser: false,
@@ -5,35 +9,42 @@ export const config = {
 };
 
 export default async function handler(req, res) {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  console.log(`[NUR QA Proxy] Forwarding multi-file upload to: ${backendUrl}/api/analyze-direct`);
+  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000';
 
   try {
+    const targetUrl = new URL('/api/analyze-direct', BACKEND_URL);
     const safeHeaders = {
       'content-type': req.headers['content-type'],
       'content-length': req.headers['content-length'],
-      'accept': req.headers['accept']
+      'accept': req.headers['accept'],
     };
 
-    const response = await fetch(`${backendUrl}/api/analyze-direct`, {
+    const options = {
+      hostname: targetUrl.hostname,
+      port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
+      path: targetUrl.pathname + targetUrl.search,
       method: 'POST',
       headers: safeHeaders,
-      body: req,
-      duplex: 'half'
+    };
+
+    const client = targetUrl.protocol === 'https:' ? https : http;
+    const proxyReq = client.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[NUR QA Proxy] Backend error: ${response.status} - ${errorText}`);
-      return res.status(response.status).send(errorText);
-    }
+    proxyReq.on('error', (err) => {
+      console.error('[NUR Proxy Error]', err.message);
+      if (!res.headersSent) res.status(502).json({ error: 'Bad Gateway' });
+      else res.end();
+    });
 
-    const data = await response.json();
-    return res.status(200).json(data);
+    req.pipe(proxyReq, { end: true });
 
   } catch (error) {
-    console.error("[NUR QA Proxy] Error proxying multi-file request:", error);
-    return res.status(500).json({ error: "Failed to connect to analysis engine" });
+    console.error('[NUR Proxy Setup Error]', error);
+    res.status(500).json({ error: 'Proxy Setup Error' });
   }
 }

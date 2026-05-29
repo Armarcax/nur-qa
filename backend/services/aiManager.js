@@ -1,16 +1,16 @@
 const Groq = require('groq-sdk');
-const OpenAI = require('openai'); // For OpenRouter
+const OpenAI = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { Ollama } = require('ollama'); // Local AI
+let Ollama;
+try { Ollama = require('ollama').Ollama; } catch (e) { console.warn("Ollama package not found."); }
 
-// Initialize Clients
 const groqClient = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 const openRouterClient = process.env.OPENROUTER_API_KEY ? new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_API_KEY,
 }) : null;
 const geminiClient = process.env.GOOGLE_GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY) : null;
-const ollamaClient = new Ollama({ host: 'http://localhost:11434' });
+const ollamaClient = Ollama ? new Ollama({ host: 'http://localhost:11434' }) : null;
 
 const SYSTEM_PROMPT = `
 You are NUR QA, an expert Senior Software Engineer.
@@ -116,19 +116,17 @@ async function analyzeWithGemini(codeContext) {
   }
 }
 
-// --- NEW: Local Ollama Function ---
 async function analyzeWithOllama(codeContext) {
   try {
-    console.log("💻 Trying Local Ollama (Qwen 2.5 Coder 3B)...");
+    if (!ollamaClient) throw new Error("Ollama not configured");
     const response = await ollamaClient.chat({
       model: 'qwen2.5-coder:3b',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Analyze and fix this code:\n\n${codeContext}` }
       ],
-      format: 'json', // Ollama supports JSON format natively
+      format: 'json',
     });
-
     return JSON.parse(response.message.content);
   } catch (e) {
     console.warn("Ollama failed:", e.message);
@@ -136,54 +134,17 @@ async function analyzeWithOllama(codeContext) {
   }
 }
 
-/**
- * Main Function: Tries Groq -> OpenRouter -> Gemini -> Ollama
- */
 async function generateTestsAndBugs(aiContext) {
   let codeContext = "";
-  let totalChars = 0;
-  const CHAR_LIMIT = 25000; // Reduced for local AI stability
-
   for (const file of aiContext) {
     if (!file.content) continue;
-    const fileStr = `\n--- FILE: ${file.path} ---\n${file.content}\n`;
-    if (totalChars + fileStr.length > CHAR_LIMIT) break;
-    codeContext += fileStr;
-    totalChars += fileStr.length;
+    codeContext += `\n--- FILE: ${file.path} ---\n${file.content}\n`;
   }
 
   if (!codeContext.trim()) throw new Error("No code to analyze.");
 
-  // Mock AI results if no keys are provided (for testing/demo)
-  if (!process.env.GROQ_API_KEY && !process.env.OPENROUTER_API_KEY && !process.env.GOOGLE_GEMINI_API_KEY && process.env.NODE_ENV === 'test') {
-    console.log("🧪 Test Mode: Returning Mock AI Results");
-    return {
-      issues: [
-        {
-          type: "warning",
-          file: "test.js",
-          line: 1,
-          message: "Console log found",
-          suggestion: "Remove console.log for production",
-          fix: "// console.log removed"
-        }
-      ],
-      fixedFiles: [
-        {
-          path: "test.js",
-          content: "// console.log removed\nconsole.log(\"hello world\")"
-        }
-      ],
-      changelog: [
-        {
-          file: "test.js",
-          bugType: "warning",
-          originalLine: 1,
-          fixApplied: "Commented out console.log",
-          status: "fixed"
-        }
-      ]
-    };
+  if (process.env.NODE_ENV === 'test') {
+    return { issues: [], fixedFiles: [], changelog: [] };
   }
 
   // Waterfall Logic
