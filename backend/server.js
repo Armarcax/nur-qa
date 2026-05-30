@@ -1,124 +1,157 @@
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const AdmZip = require('adm-zip');
-const { processUploadedFile, processDirectFiles } = require('./utils/fileProcessor');
-const { generateTestsAndBugs } = require('./services/aiManager');
-const { getRepoZip } = require('./services/githubService');
+const path = require('path');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
+const { processZipFile, processDirectFiles } = require('./utils/fileProcessor');
+const { analyzeCodebase } = require('./services/aiManager');
+const { analyzeGithubRepo } = require('./services/githubService');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(cors({ origin: '*' }));
+// Session Management for Downloads
+// Map<sessionId, { zipBuffer: Buffer, timestamp: number }>
+const SESSION_MAP = new Map();
+const SESSION_LIMIT = 50;
+const SESSION_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Cleanup old sessions every minute
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of SESSION_MAP.entries()) {
+    if (now - session.timestamp > SESSION_TTL) {
+      SESSION_MAP.delete(id);
+    }
+  }
+}, 60000);
+
+app.use(cors({
+  origin: '*',
+  exposedHeaders: ['Content-Disposition']
+}));
 app.use(express.json());
 
-// Configure Multer
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 } // 20MB limit
-});
+const upload = multer({ dest: 'temp/' });
 
-// Helper: Create fixed ZIP
-function createFixedZip(allFiles, fixedFiles) {
-  const newZip = new AdmZip();
-  allFiles.forEach(file => {
-    newZip.addFile(file.path, file.buffer);
-  });
-  if (fixedFiles && fixedFiles.length > 0) {
-    fixedFiles.forEach(fixedFile => {
-      newZip.addFile(fixedFile.path, Buffer.from(fixedFile.content));
-    });
+// Helper to store session
+const createDownloadSession = (zipBuffer) => {
+  if (SESSION_MAP.size >= SESSION_LIMIT) {
+    const oldestKey = SESSION_MAP.keys().next().value;
+    SESSION_MAP.delete(oldestKey);
   }
-  return newZip.toBuffer();
-}
+  const sessionId = uuidv4();
+  SESSION_MAP.set(sessionId, { zipBuffer, timestamp: Date.now() });
+  return sessionId;
+};
 
-// Helper: Calculate Stats
-function calculateStats(results) {
-  return {
-    errors: results.issues.filter(i => i.type === 'error').length,
-    warnings: results.issues.filter(i => i.type === 'warning').length,
-    performance: results.issues.filter(i => i.type === 'performance').length,
-    score: Math.max(0, 100 - (results.issues.length * 5)),
-    coverage: Math.min(100, Math.max(40, 100 - (results.issues.filter(i => i.type === 'warning').length * 2)))
-  };
-}
-
-// --- Route 1: ZIP Upload ---
+// 1. Analyze ZIP Project
 app.post('/api/analyze', upload.single('project'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const { allFiles, aiContext } = await processUploadedFile(req.file.buffer);
-    if (aiContext.length === 0) return res.status(400).json({ error: "No valid code files found" });
+    if (!req.file) return res.status(400).json({ error: 'No project file uploaded.' });
 
-    const results = await generateTestsAndBugs(aiContext);
+    const { filesForAI, zipBuffer } = await processZipFile(req.file.path);
+    const analysisReport = await analyzeCodebase(filesForAI);
 
-    if (results.fixedFiles && results.fixedFiles.length > 0) {
-      const zipBuffer = createFixedZip(allFiles, results.fixedFiles);
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', 'attachment; filename=fixed_project.zip');
-      res.setHeader('X-QA-Report', JSON.stringify({ issues: results.issues, stats: calculateStats(results) }));
-      return res.send(zipBuffer);
-    }
+    const finalZip = await processZipFile(req.file.path, analysisReport.fixedFiles);
+    const sessionId = createDownloadSession(finalZip.zipBuffer);
 
-    res.json({ success: true, report: { issues: results.issues, stats: calculateStats(results) } });
+    res.json({
+      success: true,
+      report: {
+        issues: analysisReport.issues,
+        changelog: analysisReport.changelog,
+        stats: analysisReport.stats
+      },
+      downloadReady: true,
+      sessionId
+    });
   } catch (error) {
-    console.error("ZIP Analysis Error:", error);
+    console.error('ZIP Analysis Error:', error);
     res.status(500).json({ error: error.message });
+  } finally {
+    if (req.file?.path) fs.unlinkSync(req.file.path);
   }
 });
 
-// --- Route 2: Direct Multi-File Upload ---
+// 2. Analyze Direct Files (Multi-upload)
 app.post('/api/analyze-direct', upload.array('files', 50), async (req, res) => {
   try {
-    if (!req.files || req.files.length === 0) return res.status(400).json({ error: "No files uploaded" });
-    const { allFiles, aiContext } = await processDirectFiles(req.files);
-    if (aiContext.length === 0) return res.status(400).json({ error: "No valid code files identified" });
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded.' });
 
-    const results = await generateTestsAndBugs(aiContext);
+    const { filesForAI, zipBuffer } = await processDirectFiles(req.files);
+    const analysisReport = await analyzeCodebase(filesForAI);
 
-    if (results.fixedFiles && results.fixedFiles.length > 0) {
-      const zipBuffer = createFixedZip(allFiles, results.fixedFiles);
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', 'attachment; filename=fixed_files.zip');
-      res.setHeader('X-QA-Report', JSON.stringify({ issues: results.issues, stats: calculateStats(results) }));
-      return res.send(zipBuffer);
-    }
+    const finalZip = await processDirectFiles(req.files, analysisReport.fixedFiles);
+    const sessionId = createDownloadSession(finalZip.zipBuffer);
 
-    res.json({ success: true, report: { issues: results.issues, stats: calculateStats(results) } });
+    res.json({
+      success: true,
+      report: {
+        issues: analysisReport.issues,
+        changelog: analysisReport.changelog,
+        stats: analysisReport.stats
+      },
+      downloadReady: true,
+      sessionId
+    });
   } catch (error) {
-    console.error("Direct Upload Error:", error);
+    console.error('Direct Analysis Error:', error);
     res.status(500).json({ error: error.message });
+  } finally {
+    req.files?.forEach(f => fs.unlinkSync(f.path));
   }
 });
 
-// --- Route 3: GitHub Repo ---
+// 3. Analyze GitHub Repository
 app.post('/api/analyze-github', async (req, res) => {
+  const { owner, repo } = req.body;
+  if (!owner || !repo) return res.status(400).json({ error: 'Owner and Repo are required.' });
+
   try {
-    const { owner, repo, branch } = req.body;
-    if (!owner || !repo) return res.status(400).json({ error: "Owner and Repo are required" });
-    const zipBuffer = await getRepoZip(owner, repo, branch || 'main');
-    const { allFiles, aiContext } = await processUploadedFile(zipBuffer);
-    if (aiContext.length === 0) return res.status(400).json({ error: "No code files found" });
+    const { filesForAI, zipBuffer } = await analyzeGithubRepo(owner, repo);
+    const analysisReport = await analyzeCodebase(filesForAI);
 
-    const results = await generateTestsAndBugs(aiContext);
+    // For GitHub, we regenerate the ZIP with fixes if possible, or just send the original with report
+    // In this MVP, we use the original zipBuffer as base
+    const sessionId = createDownloadSession(zipBuffer);
 
-    if (results.fixedFiles && results.fixedFiles.length > 0) {
-      const finalZip = createFixedZip(allFiles, results.fixedFiles);
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename=${repo}_fixed.zip`);
-      res.setHeader('X-QA-Report', JSON.stringify({ issues: results.issues, stats: calculateStats(results) }));
-      return res.send(finalZip);
-    }
-
-    res.json({ success: true, report: { issues: results.issues, stats: calculateStats(results) } });
+    res.json({
+      success: true,
+      report: {
+        issues: analysisReport.issues,
+        changelog: analysisReport.changelog,
+        stats: analysisReport.stats
+      },
+      downloadReady: true,
+      sessionId
+    });
   } catch (error) {
-    console.error("GitHub Error:", error);
+    console.error('GitHub Analysis Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/health', (req, res) => res.json({ status: "ok" }));
+// 4. Download Session-based Fix
+app.get('/api/download-fix/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const session = SESSION_MAP.get(sessionId);
 
-app.listen(PORT, () => console.log(`NUR QA Backend running on http://localhost:${PORT}`));
+  if (!session) {
+    return res.status(404).send('Download session expired or not found.');
+  }
+
+  res.set({
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="fixed_project_${Date.now()}.zip"`,
+    'Content-Length': session.zipBuffer.length
+  });
+
+  res.send(session.zipBuffer);
+  SESSION_MAP.delete(sessionId); // One-time download
+});
+
+app.listen(PORT, () => {
+  console.log(`NUR QA Backend v2.1 running on port ${PORT}`);
+});

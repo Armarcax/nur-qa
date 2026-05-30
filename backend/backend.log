@@ -1,0 +1,4 @@
+(node:812281) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+NUR QA Backend v2.1 running on port 5000
+AI Provider failed: fetch failed
